@@ -29,6 +29,9 @@ jobs:
           pip install -r requirements.txt
 
       - name: 🔨 Build Application with PyInstaller
+        env:
+          PYTHONUTF8: "1" # 👈 强制开启 Python 的 UTF-8 模式
+          PYTHONIOENCODING: "utf-8" # 👈 强制控制台输出使用 UTF-8
         run: |
           pyinstaller build_all.spec --noconfirm
 
