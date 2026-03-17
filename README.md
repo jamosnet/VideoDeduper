@@ -52,7 +52,7 @@
 
 无需配置复杂的 Python 环境，小白用户可以直接下载打包好的开箱即用版。
 
-1. 前往 [Releases](https://github.com/YourName/VideoDeduper/releases) 页面下载最新的 `VideoDeduper_Windows.zip`。
+1. 前往 [Releases](https://github.com/jamosnet/VideoDeduper/releases) 页面下载最新的 `VideoDeduper_Windows.zip`。
 2. 解压到一个**纯英文路径**下。
 3. 如果软件弹窗提示缺少依赖，请允许其自动下载（或手动将 `models` 文件夹与所需的 `.exe` 工具放入同级目录）。
 4. 双击 `main_gui.exe` 开始你的去重之旅！
@@ -66,7 +66,7 @@
 ### 1. 环境准备
 推荐使用 Python 3.11 或更高版本。
 ```bash
-git clone https://github.com/YourName/VideoDeduper.git
+git clone https://github.com/jamosnet/VideoDeduper.git
 cd VideoDeduper
 pip install -r requirements.txt
 ```
@@ -75,7 +75,7 @@ pip install -r requirements.txt
 ### 2. 补齐依赖项
 由于版权与体积原因，源码库不包含第三方二进制工具和 AI 模型权重。
 1.  下载 `ffmpeg.exe`, `ffprobe.exe` 和 `fpcalc.exe` 并放入项目根目录。
-2.  前往 [环境依赖包下载地址(待填)] 下载 `models` 文件夹，并解压到项目根目录。
+2.  前往 https://github.com/jamosnet/VideoDeduper/releases/tag/v1.0.0-asset  下载 `models` 文件夹，并解压到项目根目录。
 
 ### 3. 运行主程序
 ```bash
@@ -102,6 +102,8 @@ python main_gui.py
 
 *   **GitHub**: [@jamosnet](https://github.com/jamosnet)
 *   **邮箱**: jamosnet@outlook.com
+*   **QQ**: **8185250**
+
 
 ## 📄 许可证
 
