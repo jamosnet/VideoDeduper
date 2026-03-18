@@ -55,12 +55,13 @@ jobs:
 
       - name: 📂 Extract Assets into Release Folders
         run: |
-          # 版本 B 放入 Tool 工具
-          Expand-Archive -Path Tool.zip -DestinationPath release_b\ -Force
+          # 版本 B 放入 Tool 工具，直接解压到 VideoDedupeTool 文件夹内部
+          Expand-Archive -Path Tool.zip -DestinationPath release_b\VideoDedupeTool\ -Force
           
-          # 版本 C 放入 Tool 和 models 工具
-          Expand-Archive -Path Tool.zip -DestinationPath release_c\ -Force
-          Expand-Archive -Path models.zip -DestinationPath release_c\ -Force
+          # 版本 C 放入 Tool 和 models 工具 都解压到 VideoDedupeTool 文件夹内部
+          Expand-Archive -Path Tool.zip -DestinationPath release_c\VideoDedupeTool\ -Force
+          Expand-Archive -Path models.zip -DestinationPath release_c\VideoDedupeTool\ -Force
+
 
       - name: 🗜️ Create Final Zip Archives
         run: |

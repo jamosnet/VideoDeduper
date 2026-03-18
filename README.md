@@ -52,10 +52,11 @@
 
 无需配置复杂的 Python 环境，小白用户可以直接下载打包好的开箱即用版。
 
-1. 前往 [Releases](https://github.com/jamosnet/VideoDeduper/releases) 页面下载最新的 `VideoDeduper_Windows.zip`。
+1. 前往 [Releases](https://github.com/jamosnet/VideoDeduper/releases) 页面下载最新的 `VideoDeduper_Full.zip`。 ![Version](https://img.shields.io/github/v/release/jamosnet/VideoDeduper)
 2. 解压到一个**纯英文路径**下。
 3. 如果软件弹窗提示缺少依赖，请允许其自动下载（或手动将 `models` 文件夹与所需的 `.exe` 工具放入同级目录）。
 4. 双击 `main_gui.exe` 开始你的去重之旅！
+
 
 ---
 

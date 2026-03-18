@@ -31,7 +31,9 @@ class ExportMixin2:
                 need_tools = True
 
         # 2. 检查 AI 模型文件夹
-        if not os.path.exists(os.path.join(base_dir, 'models')):
+        models_path = os.path.join(base_dir, 'models')
+        #if not os.path.exists(models_path):
+        if not os.path.exists(models_path) or self.get_folder_size(models_path) < 200 * 1024 * 1024:  # 200MB
             missing_items.append('models/ (AI语音识别模型)')
             need_models = True
 
@@ -162,3 +164,12 @@ class ExportMixin2:
             self.root.after(0, window.destroy)
             self.root.after(0, lambda: messagebox.showerror("下载错误", error_msg))
             self.root.after(0, lambda: self.status_var.set("⚠️ 环境自动配置失败，需手动介入。"))
+
+
+    def get_folder_size(self, folder_path):
+        """获取文件夹的总大小"""
+        total_size = 0
+        for dirpath, _, filenames in os.walk(folder_path):  # 不需要 dirnames，直接丢弃
+            for f in filenames:
+                total_size += os.path.getsize(os.path.join(dirpath, f))
+        return total_size

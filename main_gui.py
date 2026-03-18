@@ -14,7 +14,7 @@ from gui_commander_sub1 import ExportMixin
 from gui_commander_sub2 import ExportMixin2
 
 
-__version__ = "1.0.0"
+__version__ = "1.0.3"
 
 WORKSPACES_DIR = "workspaces"
 
