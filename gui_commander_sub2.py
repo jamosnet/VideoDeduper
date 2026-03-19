@@ -30,12 +30,12 @@ class ExportMixin2:
                 missing_items.append(tool_exe)
                 need_tools = True
 
-        # 2. 检查 AI 模型文件夹
-        models_path = os.path.join(base_dir, 'models')
-        #if not os.path.exists(models_path):
-        if not os.path.exists(models_path) or self.get_folder_size(models_path) < 200 * 1024 * 1024:  # 200MB
-            missing_items.append('models/ (AI语音识别模型)')
-            need_models = True
+        # # 2. 检查 AI 模型文件夹
+        # models_path = os.path.join(base_dir, 'models')
+        # #if not os.path.exists(models_path):
+        # if not os.path.exists(models_path) or self.get_folder_size(models_path) < 200 * 1024 * 1024:  # 200MB
+        #     missing_items.append('models/ (AI语音识别模型)')
+        #     need_models = True
 
         if not missing_items:
             print(f'所需依赖文件 { " ".join([f"{file}.exe" for file in depend_files]) } 已经存在')

@@ -2,31 +2,26 @@
 
 import os
 import shutil
+import funasr
 from PyInstaller.utils.hooks import collect_data_files, collect_submodules
 
 # ==========================================
 # 👑 终极暴力破解：自动化你的手工复制操作！
 # ==========================================
-# 动态检测是 funasr_onnx 还是 funasr，适配最新的依赖变化
-try:
-    import funasr_onnx as asr_pkg
-    asr_pkg_name = 'funasr_onnx'
-except ImportError as e:
-    print(f" 导入funasr_onnx具体的错误提示为: {e}")
-    import funasr as asr_pkg
-    asr_pkg_name = 'funasr'
-
-asr_real_path = os.path.dirname(asr_pkg.__file__)
-print(f"\n🔥 侦测到本机 ASR 真实路径: {asr_real_path} (包名: {asr_pkg_name})")
+# 让打包脚本自动在你的电脑上找到 funasr 的安装目录
+funasr_real_path = os.path.dirname(funasr.__file__)
+print(f"\n🔥 侦测到本机 funasr 真实路径: {funasr_real_path}")
 print("🔥 正在启用核弹级打包策略：全量物理拷贝...\n")
 
-# 强制将整个 ASR 源码文件夹当作“静态文件”拷贝到打包后的 _internal 里
-brute_force_datas = [ (asr_real_path, asr_pkg_name) ]
+# 强制将整个 funasr 源码文件夹当作“静态文件”拷贝到打包后的 _internal/funasr 里
+# 这和你手动复制的效果一模一样！
+brute_force_datas =[ (funasr_real_path, 'funasr') ]
 
-# 其他常规库的数据 (新增 onnxruntime)
-other_datas = collect_data_files('modelscope') + collect_data_files('jieba') + collect_data_files('onnxruntime')
+# 其他常规库的数据
+other_datas = collect_data_files('modelscope') + collect_data_files('jieba')
 all_datas = brute_force_datas + other_datas
-all_hidden_imports = collect_submodules('modelscope') + collect_submodules('onnxruntime')
+all_hidden_imports = collect_submodules('modelscope')
+
 
 # ==========================================
 # 1. 定义所有的独立脚本 (Analysis)

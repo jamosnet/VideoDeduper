@@ -179,94 +179,20 @@ class ExportMixin:
                 subprocess.run(['ffmpeg', '-y', '-i', file_path, '-vn', '-acodec', 'pcm_s16le', '-ar', '16000', '-ac', '1', temp_wav], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
                 full_text = ""
-                #try:
-                #    from funasr import AutoModel
-                #    import torch
-                #    device = "cuda:0" if torch.cuda.is_available() else "cpu"
-                #    model = AutoModel(
-                #        model="iic/speech_paraformer-large_asr_nat-zh-cn-16k-common-vocab8404-pytorch",
-                #        vad_model="iic/speech_fsmn_vad_zh-cn-16k-common-pytorch",
-                #        punc_model="iic/punc_ct-transformer_zh-cn-common-vocab272727-pytorch",
-                #        device=device, disable_update=True
-                #    )
-                #    res = model.generate(input=temp_wav, batch_size_s=300)
-                #    full_text = res[0].get('text', '') if res else ""
-                #except Exception as e:
-                #    txt.insert(tk.END, f"   ⚠️ ASR加载或推理失败: {e}\n")
-
-
                 try:
-                    import sys
-                    from funasr_onnx import Fsmn_vad, Paraformer, CT_Transformer
-                    import soundfile as sf
-                    
-                    # 1. 获取本地模型路径
-                    if getattr(sys, 'frozen', False):
-                        base_dir = os.path.dirname(sys.executable)
-                    else:
-                        base_dir = os.path.dirname(os.path.abspath(__file__))
-                        
-                    vad_model_dir = os.path.join(base_dir, "models", "speech_fsmn_vad_zh-cn-16k-common-pytorch")
-                    asr_model_dir = os.path.join(base_dir, "models", "speech_paraformer-large_asr_nat-zh-cn-16k-common-vocab8404-pytorch")
-                    punc_model_dir = os.path.join(base_dir, "models", "punc_ct-transformer_zh-cn-common-vocab272727-pytorch")
-
-                    # 2. 加载极速模型
-                    vad_model = Fsmn_vad(vad_model_dir, quantize=True)
-                    asr_model = Paraformer(asr_model_dir, batch_size=1, quantize=True)
-                    punc_model = CT_Transformer(punc_model_dir, quantize=True)
-                    
-                    # 暴力提取文字函数
-                    def extract_string(obj):
-                        if isinstance(obj, str): return obj
-                        if isinstance(obj, dict):
-                            val = obj.get("text", "") or obj.get("preds", "")
-                            if val: return extract_string(val)
-                            for v in obj.values():
-                                res = extract_string(v)
-                                if res: return res
-                            return ""
-                        if isinstance(obj, (list, tuple)):
-                            for item in obj:
-                                res = extract_string(item)
-                                if res: return res
-                            return ""
-                        return ""
-
-                    # 3. 运行 VAD 切片
-                    vad_segments = vad_model([temp_wav])
-                    if vad_segments and vad_segments[0]:
-                        speech, sample_rate = sf.read(temp_wav)
-                        # 为了安全，切片临时文件也放到系统的 temp 目录下
-                        temp_chunk_path = os.path.join(tempfile.gettempdir(), "_ext_temp_chunk.wav")
-                        full_text_list = []
-                        
-                        for segment in vad_segments[0]:
-                            start_ms, end_ms = segment[0], segment[1]
-                            start_idx = int(start_ms * sample_rate / 1000)
-                            end_idx = int(end_ms * sample_rate / 1000)
-                            audio_chunk = speech[start_idx:end_idx]
-                            
-                            sf.write(temp_chunk_path, audio_chunk, sample_rate)
-                            
-                            # ASR 识别
-                            asr_res = asr_model([temp_chunk_path])
-                            raw_text = extract_string(asr_res).strip()
-                            
-                            if raw_text:
-                                # 加入标点
-                                punc_res = punc_model(raw_text) # 加上列表扩号以防底层报错
-                                punctuated_text = extract_string(punc_res) or raw_text
-                                full_text_list.append(punctuated_text)
-                                
-                        if os.path.exists(temp_chunk_path):
-                            try: os.remove(temp_chunk_path)
-                            except: pass
-                            
-                        # 4. 完美拼接成带有标点符号的长字符串
-                        full_text = "".join(full_text_list)
-
+                   from funasr import AutoModel
+                   import torch
+                   device = "cuda:0" if torch.cuda.is_available() else "cpu"
+                   model = AutoModel(
+                       model="iic/speech_paraformer-large_asr_nat-zh-cn-16k-common-vocab8404-pytorch",
+                       vad_model="iic/speech_fsmn_vad_zh-cn-16k-common-pytorch",
+                       punc_model="iic/punc_ct-transformer_zh-cn-common-vocab272727-pytorch",
+                       device=device, disable_update=True
+                   )
+                   res = model.generate(input=temp_wav, batch_size_s=300)
+                   full_text = res[0].get('text', '') if res else ""
                 except Exception as e:
-                    txt.insert(tk.END, f"   ⚠️ ASR/ONNX加载或推理失败: {e}\n")
+                   txt.insert(tk.END, f"   ⚠️ ASR加载或推理失败: {e}\n")
 
 
                 if os.path.exists(temp_wav): os.remove(temp_wav)

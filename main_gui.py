@@ -14,7 +14,7 @@ from gui_commander_sub1 import ExportMixin
 from gui_commander_sub2 import ExportMixin2
 
 
-__version__ = "1.0.3"
+__version__ = "1.0.4"
 
 WORKSPACES_DIR = "workspaces"
 
@@ -46,7 +46,7 @@ def get_resource_path(relative_path):
 class VideoDedupeApp(ExportMixin, ExportMixin2):
     def __init__(self, root):
         self.root = root
-        self.root.title(f"视频去重指挥官 (多任务工作区版) V{__version__}")
+        self.root.title(f"视频去重指挥官 (多任务工作区版)支持GPU V{__version__}")
         self.root.geometry("1400x850")
         
         # 👇 加上这两行，让窗口左上角和任务栏也显示你的图标
@@ -230,6 +230,12 @@ class VideoDedupeApp(ExportMixin, ExportMixin2):
                 ent_dir.delete(0, tk.END)
                 ent_dir.insert(0, os.path.normpath(d))
                 ent_dir.config(state='readonly')
+
+                dir_name = os.path.basename(d) # 获取目录名称并填充到 ent_name
+                if not ent_name.get():  # 如果 ent_name 为空，才填充
+                    ent_name.insert(0, dir_name)
+
+
             # 👇 增加这两行：选完目录后，强制把小窗口拉回最顶层并获取光标焦点
             win.lift()
             win.focus_force()
