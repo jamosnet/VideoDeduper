@@ -1,4 +1,4 @@
-name: Build and Release VideoDeduper
+name: Build and Release VideoDeduper GPU
 
 on:
   push:
@@ -10,7 +10,7 @@ permissions:
 
 jobs:
   build-and-release:
-    runs-on: windows-latest # 假设目标平台为 Windows，生成 .exe（如需 Linux/Mac 可更改）
+    runs-on: windows-latest
 
     steps:
       - name: 📥 Checkout code
@@ -20,63 +20,47 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: '3.11.9'
-          cache: 'pip' # 自动开启 pip 缓存，加快后续构建速度
+          cache: 'pip'
 
       - name: 📦 Install Dependencies
         run: |
           python -m pip install --upgrade pip
-          # requirements.txt 中已经包含 pyinstaller，这里会一并安装
           pip install -r requirements.txt
 
       - name: 🔨 Build Application with PyInstaller
         env:
-          PYTHONUTF8: "1" # 👈 强制开启 Python 的 UTF-8 模式
-          PYTHONIOENCODING: "utf-8" # 👈 强制控制台输出使用 UTF-8
+          PYTHONUTF8: "1"
+          PYTHONIOENCODING: "utf-8"
         run: |
           pyinstaller build_all.spec --noconfirm
 
-      - name: 🗂️ Prepare Release Directories
+      - name: 🗂️ Prepare Release Directory
         run: |
-          # 创建三个对应不同版本的文件夹
-          mkdir release_a # A: 仅更新（不包含附加依赖）
-          mkdir release_b # B: 快速体验（包含 Tool）
-          mkdir release_c # C: 全功能（包含 Tool + models）
+          # 创建一个统一的 GPU 发布文件夹
+          mkdir release_gpu
           
-          # 将打包出的文件（假设输出在 dist 目录）拷贝到三个文件夹中
-          Copy-Item -Path "dist\*" -Destination "release_a\" -Recurse -Force
-          Copy-Item -Path "dist\*" -Destination "release_b\" -Recurse -Force
-          Copy-Item -Path "dist\*" -Destination "release_c\" -Recurse -Force
+          # 将打包出的可执行文件拷贝到文件夹中
+          # 注意：请确保你的 build_all.spec 输出在 dist 目录下
+          Copy-Item -Path "dist\*" -Destination "release_gpu\" -Recurse -Force
 
-      - name: ⬇️ Download Assets (Tool.zip & models.zip)
+      - name: ⬇️ Download Tool Asset
         run: |
-          # 使用 curl 下载你指定的两个真实组件包 (-L 参数用于自动跟踪重定向)
+          # 仅下载包含 3 个 EXE 工具的 Tool.zip
           curl -L -o Tool.zip "https://github.com/jamosnet/VideoDeduper/releases/download/v1.0.0-asset/Tool.zip"
-          curl -L -o models.zip "https://github.com/jamosnet/VideoDeduper/releases/download/v1.0.0-asset/models.zip"
 
-      - name: 📂 Extract Assets into Release Folders
+      - name: 📂 Extract Tools into Release Folder
         run: |
-          # 版本 B 放入 Tool 工具，直接解压到 VideoDedupeTool 文件夹内部
-          Expand-Archive -Path Tool.zip -DestinationPath release_b\VideoDedupeTool\ -Force
-          
-          # 版本 C 放入 Tool 和 models 工具 都解压到 VideoDedupeTool 文件夹内部
-          Expand-Archive -Path Tool.zip -DestinationPath release_c\VideoDedupeTool\ -Force
-          Expand-Archive -Path models.zip -DestinationPath release_c\VideoDedupeTool\ -Force
+          # 将工具解压到发布文件夹内的 VideoDedupeTool 子目录（或你指定的目录）
+          Expand-Archive -Path Tool.zip -DestinationPath release_gpu\VideoDedupeTool\ -Force
 
-
-      - name: 🗜️ Create Final Zip Archives
+      - name: 🗜️ Create Final GPU Zip Archive
         run: |
-          # 将这三个文件夹分别压缩成最终发布的压缩包
-          Compress-Archive -Path "release_a\*" -DestinationPath "VideoDeduper_UpdateOnly.zip" -Force
-          Compress-Archive -Path "release_b\*" -DestinationPath "VideoDeduper_WithTools.zip" -Force
-          Compress-Archive -Path "release_c\*" -DestinationPath "VideoDeduper_Full.zip" -Force
+          # 将文件夹压缩为最终带 GPU 标识的压缩包
+          Compress-Archive -Path "release_gpu\*" -DestinationPath "VideoDeduper_GPU.zip" -Force
 
       - name: 🚀 Publish to GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            VideoDeduper_UpdateOnly.zip
-            VideoDeduper_WithTools.zip
-            VideoDeduper_Full.zip
-          generate_release_notes: true # 自动生成 release 的更新日志
-
-
+            VideoDeduper_GPU.zip
+          generate_release_notes: true
