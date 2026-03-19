@@ -55,12 +55,22 @@ jobs:
 
       - name: 🗜️ Create Final GPU Zip Archive
         run: |
+          # 使用 7z 进行压缩并分卷，每个分片最大 2000MB
+          # a: 添加到压缩包
+          # -v2000m: 按照 2000MB 分卷
+          # -tzip: 格式为 zip (分卷后会变成 .zip.001, .zip.002 ...)
+          7z a -v2000m VideoDeduper_GPU.zip ./release_gpu/*        
+          
           # 将文件夹压缩为最终带 GPU 标识的压缩包
-          Compress-Archive -Path "release_gpu\*" -DestinationPath "VideoDeduper_GPU.zip" -Force
+          #Compress-Archive -Path "release_gpu\*" -DestinationPath "VideoDeduper_GPU.zip" -Force
 
       - name: 🚀 Publish to GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            VideoDeduper_GPU.zip
+            VideoDeduper_GPU.zip.*
+          body: |
+            ### 📥 下载说明 / Download Instructions
+            由于文件超过 GitHub 2GB 限制，已切分为多个分卷。
+            请下载 **所有** `VideoDeduper_GPU.zip.00x` 文件，放在同一文件夹下，然后使用 7-Zip 或 WinRAR 解压第一个文件即可。
           generate_release_notes: true
