@@ -122,7 +122,8 @@ class VideoDedupeApp(ExportMixin, ExportMixin2):
 
         self.btn_external_check = tk.Button(frame_action, text="🔍 外部单文件查重", command=self.run_external_check, bg="#e0f7fa", **btn_style)
         self.btn_external_check.pack(side=tk.LEFT, padx=5)        
-        
+        self.btn_batch_check = tk.Button(frame_action, text="📂 批量文件夹查重", command=self.run_batch_external_check, bg="#fff9c4", **btn_style)
+        self.btn_batch_check.pack(side=tk.LEFT, padx=5)
         
         self.btn_refresh = tk.Button(frame_action, text="🔄 刷新列表", command=self.load_data, **btn_style)
         self.btn_refresh.pack(side=tk.LEFT, padx=5)
@@ -170,6 +171,7 @@ class VideoDedupeApp(ExportMixin, ExportMixin2):
         self.context_menu.add_command(label="✂️ 剪切选中文件到 [待确认/合集] 目录", command=self.manual_cut_files)
         self.context_menu.add_command(label="🛡️ 误判！改为保留 (Status=1)", command=lambda: self.update_status(1, "人工:保留"))
         self.context_menu.add_command(label="❌ 垃圾！标记删除 (Status=99)", command=lambda: self.update_status(99, "人工:待删"))
+        self.context_menu.add_command(label="💔 解除关联！恢复为独立文件 (Status=1)", command=self.restore_independent)
         self.context_menu.add_separator()
         self.context_menu.add_command(label="📝 查看视频ASR字幕内容", command=self.show_asr_text)  # 👇 新增：查看字幕菜单项
         self.context_menu.add_command(label="🎵 深度对比选中的2个文件(音频指纹)", command=self.run_audio_inspector_gui)
@@ -230,6 +232,12 @@ class VideoDedupeApp(ExportMixin, ExportMixin2):
                 ent_dir.delete(0, tk.END)
                 ent_dir.insert(0, os.path.normpath(d))
                 ent_dir.config(state='readonly')
+
+                dir_name = os.path.basename(d) # 获取目录名称并填充到 ent_name
+                if not ent_name.get():  # 如果 ent_name 为空，才填充
+                    ent_name.insert(0, dir_name)
+
+
             # 👇 增加这两行：选完目录后，强制把小窗口拉回最顶层并获取光标焦点
             win.lift()
             win.focus_force()
@@ -592,8 +600,40 @@ class VideoDedupeApp(ExportMixin, ExportMixin2):
             
         conn.commit()
         conn.close()
-        self.load_data()    
-        
+        self.load_data()
+
+    def restore_independent(self):
+        selection = self.tree.selection()
+        if not selection: return
+
+        if not messagebox.askyesno("解除关联", "确定要解除选中文件的父子关联，将其恢复为独立的未分组文件吗？"):
+            return
+
+        conn = sqlite3.connect(self.cfg["DB_FILE"])
+        c = conn.cursor()
+
+        for item_id in selection:
+            vid = self.tree.item(item_id)['values'][6]
+
+            # 读取原来的 info，寻找并破坏 ID_xxx 纽带
+            c.execute("SELECT similarity_info FROM videos WHERE id=?", (vid,))
+            old_info = c.fetchone()[0] or ""
+
+            # 1. 清理掉以前可能打过的 [人工:xxx] 标签
+            clean_info = re.sub(r"^\[人工.*?\]\s*", "", old_info)
+            # 2. 核心逻辑：抹除所有的 ID_xxx 纽带，使其不再指向任何人
+            clean_info = re.sub(r"\s*ID_\d+\s*", " ", clean_info).strip()
+            # 3. 加上解绑专属标签
+            new_info = f"[人工:解绑] {clean_info}".strip()
+
+            # 恢复为 1！保留指纹，等待下一次微调后的匹配！
+            c.execute("UPDATE videos SET status=1, similarity_info=? WHERE id=?", (new_info, vid))
+
+        conn.commit()
+        conn.close()
+
+        # 刷新界面
+        self.load_data()
 
     def rename_selected_file(self):
         selection = self.tree.selection()
@@ -678,7 +718,10 @@ class VideoDedupeApp(ExportMixin, ExportMixin2):
                 except: pass
         conn.commit(); conn.close()
         messagebox.showinfo("完成", f"移动了 {cnt} 个文件")
-        self.load_data()
+        if cnt > 0:
+            self.run_script_in_thread("db_builder.py")
+        else:
+            self.load_data()
 
     def run_inspector_gui(self):
         # ... (保持 v14/v15 代码一致，这里省略节省空间) ...

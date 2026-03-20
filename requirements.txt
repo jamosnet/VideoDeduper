@@ -23,3 +23,4 @@ jieba==0.42.1
 numpy==1.26.4
 scipy==1.17.1
 
+codetiming==1.4.0

@@ -8,6 +8,7 @@ import json
 import numpy as np
 from multiprocessing import Pool, cpu_count, freeze_support
 from tqdm import tqdm
+from codetiming import Timer
 
 # ================= 动态配置加载 =================
 CFG = {
@@ -60,6 +61,7 @@ def get_dense_visual_hashes(file_path):
         return hashes
     except: return[]
 
+@Timer(text="\n️\r  load_or_build_index 耗时: {seconds:.2f}s")
 def load_or_build_index(conn):
     """检查并增量生成视觉指纹库"""
     c = conn.cursor()
@@ -194,4 +196,5 @@ def main():
 
 if __name__ == '__main__':
     freeze_support()
-    main()
+    with Timer(name=" main", text="{name} 耗时: {:.4f}s"):
+        main()

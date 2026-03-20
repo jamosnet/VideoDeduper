@@ -8,6 +8,7 @@ import random
 import difflib
 import numpy as np
 from tqdm import tqdm
+from codetiming import Timer
 
 # ================= 动态配置加载 =================
 CFG = {
@@ -374,11 +375,13 @@ def main():
     if all_pending:
         random.shuffle(all_pending)
         print(f" 发现 {len(all_pending)} 个待转写视频 (已启用阿里 FunASR 工业流水线)。")
-        run_native_asr_extraction(conn, all_pending)
+        with Timer( text=" run_native_asr_extraction 耗时: {:.4f}s"):
+            run_native_asr_extraction(conn, all_pending)
     else:
         print(" 所有视频均已完成 ASR 特征提取。")
 
-    run_matching(conn)
+    with Timer(name=" run_matching", text="{name} 耗时: {:.4f}s"):
+        run_matching(conn)
     conn.close()
 
 if __name__ == '__main__':

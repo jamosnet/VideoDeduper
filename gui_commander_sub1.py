@@ -4,7 +4,7 @@ import sqlite3
 
 import os
 import sys
-
+from codetiming import Timer  # 引入计时器
 
 
 class ExportMixin:
@@ -350,6 +350,212 @@ class ExportMixin:
 
         import threading
         threading.Thread(target=worker, daemon=True).start()
+
+    # ================== 新增：批量全模态沙盒鉴定 (ONNX 极速版) ==================
+    @Timer(text="run_batch_external_check 执行时间: {:.4f} 秒")
+    def run_batch_external_check(self):
+        if not self.cfg.get("DB_FILE") or not os.path.exists(self.cfg["DB_FILE"]):
+            return messagebox.showerror("错误", "当前数据库不存在，请先选择一个任务工作区！")
+
+        # 1. 选择目录
+        target_dir = filedialog.askdirectory(title="选择包含待鉴定视频的文件夹")
+        if not target_dir: return
+
+        video_exts = (".mp4", ".mkv", ".avi", ".mov", ".flv", ".wmv", ".ts", ".webm", ".rm", ".rmvb")
+        files_to_check = [os.path.join(target_dir, f) for f in os.listdir(target_dir) if
+                          f.lower().endswith(video_exts)]
+
+        if not files_to_check:
+            return messagebox.showinfo("提示", "该目录下没找到视频文件。")
+
+        # 2. 进度窗口
+        win = Toplevel(self.root)
+        win.title("🚀 批量查重进度 (ONNX版)")
+        win.geometry("700x500")
+        lbl_status = tk.Label(win, text="准备中...", pady=10, font=("Microsoft YaHei", 10, "bold"))
+        lbl_status.pack()
+        txt_log = Text(win, font=("Consolas", 9), padx=5, pady=5)
+        txt_log.pack(fill=tk.BOTH, expand=True)
+
+        def batch_worker():
+            try:
+                import subprocess, pickle, tempfile, re, difflib, os, sys
+                from PIL import Image
+                import imagehash
+                import soundfile as sf
+                from funasr_onnx import Fsmn_vad, Paraformer, CT_Transformer
+
+                # --- A. 初始化：预加载数据库到内存 (加速比对) ---
+                txt_log.insert(tk.END, "⏳ 正在预加载数据库特征...\n")
+                conn = sqlite3.connect(self.cfg["DB_FILE"])
+                c = conn.cursor()
+                c.execute("SELECT id, path FROM videos")
+                db_metas = {r[0]: r[1] for r in c.fetchall()}
+                c.execute("SELECT video_id, fingerprint FROM audio_fingerprints")
+                db_audios = [(v, set(pickle.loads(f))) for v, f in c.fetchall() if f]
+                c.execute("SELECT video_id, phash FROM visual_hashes")
+                db_visuals = {};
+                [db_visuals.setdefault(v, set()).add(int(h, 16)) for v, h in c.fetchall()]
+
+                def clean_text(t):
+                    t = re.sub(r'[^\w\u4e00-\u9fa5]', '', t)
+                    t = re.sub(r'[嗯啊哦哎呀呢啦哈呗嘛]', '', t)
+                    return t.strip().lower()
+
+                c.execute("SELECT video_id, content FROM text_segments")
+                db_texts = {}
+                for v, ct in c.fetchall(): db_texts.setdefault(v, []).append((ct, clean_text(ct)))
+
+                # --- B. 初始化：加载 ONNX 模型 (只加载一次) ---
+                txt_log.insert(tk.END, "🤖 正在加载 ONNX 极速模型...\n")
+                win.update()
+                base_dir = os.path.dirname(sys.executable) if getattr(sys, 'frozen', False) else os.path.dirname(
+                    os.path.abspath(__file__))
+                vad_m = Fsmn_vad(os.path.join(base_dir, "models", "speech_fsmn_vad_zh-cn-16k-common-pytorch"),
+                                 quantize=True)
+                asr_m = Paraformer(os.path.join(base_dir, "models",
+                                                "speech_paraformer-large_asr_nat-zh-cn-16k-common-vocab8404-pytorch"),
+                                   batch_size=1, quantize=True)
+                pnc_m = CT_Transformer(
+                    os.path.join(base_dir, "models", "punc_ct-transformer_zh-cn-common-vocab272727-pytorch"),
+                    quantize=True)
+
+                def extract_string(obj):
+                    if isinstance(obj, str): return obj
+                    if isinstance(obj, dict):
+                        for k in ["text", "preds"]:
+                            if obj.get(k): return extract_string(obj[k])
+                        for v in obj.values():
+                            res = extract_string(v)
+                            if res: return res
+                    if isinstance(obj, (list, tuple)) and obj: return extract_string(obj[0])
+                    return ""
+
+                # --- C. 循环处理 ---
+                for idx, file_path in enumerate(files_to_check, 1):
+                    file_name = os.path.basename(file_path)
+                    report_path = file_path + "_报告.txt"
+
+                    # 【断点续传判断】
+                    if os.path.exists(report_path):
+                        txt_log.insert(tk.END, f"⏩ [{idx}/{len(files_to_check)}] 跳过已存在: {file_name}\n")
+                        txt_log.see(tk.END);
+                        win.update();
+                        continue
+
+                    lbl_status.config(text=f"正在处理 ({idx}/{len(files_to_check)}): {file_name}")
+                    txt_log.insert(tk.END, f"▶️ 正在鉴定: {file_name}...")
+                    txt_log.see(tk.END);
+                    win.update()
+
+                    report_content = [f"🎯 鉴定报告: {file_name}", f"📂 路径: {file_path}", "=" * 70]
+
+                    # 1. 音频比对
+                    res_audio = []
+                    cmd = ['fpcalc', '-raw', '-length', '600', file_path]
+                    out = subprocess.run(cmd, capture_output=True, text=True).stdout
+                    if 'FINGERPRINT=' in out:
+                        ext_fp = set(int(x) for x in out.split('FINGERPRINT=')[1].strip().split(',') if x)
+                        for vid, db_fp_set in db_audios:
+                            if len(ext_fp & db_fp_set) / max(1, len(ext_fp)) > 0.02:
+                                matched = sum(
+                                    1 for ha in ext_fp if any(bin(ha ^ hb).count('1') <= 2 for hb in db_fp_set))
+                                score = matched / len(ext_fp) if ext_fp else 0
+                                if score > 0.1: res_audio.append((score, vid))
+
+                    # 2. 视觉比对
+                    res_vis = []
+                    t_dir = tempfile.mkdtemp()
+                    subprocess.run(['ffmpeg', '-y', '-i', file_path, '-vf', 'fps=1,scale=-1:144',
+                                    os.path.join(t_dir, 'th_%04d.jpg')], stdout=subprocess.DEVNULL,
+                                   stderr=subprocess.DEVNULL)
+                    ext_v = [int(str(imagehash.phash(Image.open(os.path.join(t_dir, f)))), 16) for f in
+                             os.listdir(t_dir)]
+                    import shutil;
+                    shutil.rmtree(t_dir)
+                    if ext_v:
+                        tol = self.cfg.get("HAMMING_TOLERANCE", 9)
+                        for vid, db_h_set in db_visuals.items():
+                            matched = sum(
+                                1 for ha in ext_v if any(bin(ha ^ hb).count('1') <= tol for hb in db_h_set))
+                            score = matched / len(ext_v)
+                            if score > 0.1: res_vis.append((score, vid))
+
+                    # 3. ASR 比对 (ONNX 流程)
+                    res_asr = [];
+                    full_text_list = [];
+                    parts = []
+                    temp_wav = os.path.join(tempfile.gettempdir(), f"_bt_{idx}.wav")
+                    subprocess.run(
+                        ['ffmpeg', '-y', '-i', file_path, '-vn', '-acodec', 'pcm_s16le', '-ar', '16000', '-ac', '1',
+                         temp_wav], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+                    if os.path.exists(temp_wav):
+                        vad_segs = vad_m([temp_wav])
+                        if vad_segs and vad_segs[0]:
+                            speech, sr = sf.read(temp_wav)
+                            t_chunk = os.path.join(tempfile.gettempdir(), "_chunk.wav")
+                            for seg in vad_segs[0]:
+                                chunk = speech[int(seg[0] * sr / 1000):int(seg[1] * sr / 1000)]
+                                sf.write(t_chunk, chunk, sr)
+                                raw = extract_string(asr_m([t_chunk])).strip()
+                                if raw: full_text_list.append(extract_string(pnc_m(raw)) or raw)
+                            if os.path.exists(t_chunk): os.remove(t_chunk)
+                        os.remove(temp_wav)
+
+                    full_text = "".join(full_text_list)
+                    if full_text:
+                        parts = [s.strip() for s in re.split(r'[，。！？；\s,.!?;…]+', full_text) if s.strip()]
+                        ext_pairs = [(s, clean_text(s)) for s in parts if len(clean_text(s)) >= 2]
+                        sim_limit = self.cfg.get("SENTENCE_SIMILARITY", 0.65)
+                        for vid, db_list in db_texts.items():
+                            matched_p = []
+                            db_c2o = {c: o for o, c in db_list}
+                            for e_o, e_c in ext_pairs:
+                                if e_c in db_c2o:
+                                    matched_p.append((1.0, e_o, db_c2o[e_c]))
+                                else:
+                                    for d_o, d_c in db_list:
+                                        if abs(len(e_c) - len(d_c)) > 15: continue
+                                        s = difflib.SequenceMatcher(None, e_c, d_c).ratio()
+                                        if s >= sim_limit: matched_p.append((s, e_o, d_o)); break
+                            score = len(matched_p) / len(ext_pairs) if ext_pairs else 0
+                            if score > 0.08: res_asr.append((score, vid, matched_p))
+
+                    # 4. 汇总报告并保存
+                    def add_res(results, title):
+                        report_content.append(f"\n[{title}比对]")
+                        results.sort(key=lambda x: x[0], reverse=True)
+                        if not results: report_content.append("  ✅ 安全 (无重合)")
+                        for i, itm in enumerate(results[:5], 1):
+                            report_content.append(
+                                f"  🔥 Top {i} ({itm[0]:.1%}) -> {os.path.basename(db_metas.get(itm[1], '??'))}")
+                            if len(itm) > 2:
+                                for m_s, e_o, d_o in itm[2][:3]: report_content.append(
+                                    f"     ↳ (似:{m_s:.0%}) 外:{e_o} / 库:{d_o}")
+
+                    add_res(res_audio, "音频")
+                    add_res(res_vis, "视觉")
+                    add_res(res_asr, "语音")
+
+                    if parts:
+                        report_content.append("\n" + "=" * 45)
+                        report_content.append(f"📊 共提取到 {len(parts)} 句台词：")
+                        report_content.append("=" * 45 + "\n")
+                        for p_i, p_s in enumerate(parts, 1): report_content.append(f"[{p_i:03d}]  {p_s}")
+
+                    with open(report_path, "w", encoding="utf-8") as f:
+                        f.write("\n".join(report_content))
+                    txt_log.insert(tk.END, " 完成! ✅\n")
+
+                conn.close()
+                txt_log.insert(tk.END, "\n" + "★" * 20 + "\n批量任务全部完成！\n")
+                messagebox.showinfo("完成", "所有视频比对任务已结束。")
+            except Exception as e:
+                txt_log.insert(tk.END, f"\n❌ 发生异常: {e}\n")
+
+        import threading
+        threading.Thread(target=batch_worker, daemon=True).start()
 
 
     # ================== 新增：查看单文件ASR字幕内容 ==================
