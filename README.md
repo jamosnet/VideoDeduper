@@ -115,7 +115,7 @@ python main_gui.py
 > **💡 提示**: 如果你直接 Clone 本仓库进行二次开发，**无需**重复上述复杂的转化过程。只需下载打包好的 `models` 文件夹放入根目录，并使用 `pip install -r requirements.txt` 安装轻量级依赖即可直接运行。
 
 ---
-###  [关于这个项目：为什么视频去重这么难，以及我这 30 天到底经历了什么](./docs/why-video-deduplication-is-hard.md)
+### 👉  [关于这个项目：为什么视频去重这么难，以及我这 30 天到底经历了什么](./docs/why-video-deduplication-is-hard.md)
 
 
 ---
