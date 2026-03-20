@@ -4,7 +4,7 @@ import sqlite3
 
 import os
 import sys
-
+from codetiming import Timer  # 引入计时器
 
 
 class ExportMixin:
@@ -277,6 +277,245 @@ class ExportMixin:
         import threading
         threading.Thread(target=worker, daemon=True).start()
 
+    # ================== 新增：批量全模态沙盒鉴定 ==================
+    @Timer(text="run_batch_external_check 执行时间: {:.4f} 秒")
+    def run_batch_external_check(self):
+        if not self.cfg.get("DB_FILE") or not os.path.exists(self.cfg["DB_FILE"]):
+            return messagebox.showerror("错误", "当前数据库不存在，请先选择一个任务工作区！")
+
+        # 1. 选择待比对的目录
+        target_dir = filedialog.askdirectory(title="选择包含待鉴定视频的文件夹")
+        if not target_dir:
+            return
+
+        # 2. 扫描视频文件
+        video_exts = (".mp4", ".mkv", ".avi", ".mov", ".flv", ".wmv", ".ts", ".webm", ".rm", ".rmvb")
+        files_to_check = [os.path.join(target_dir, f) for f in os.listdir(target_dir)
+                          if f.lower().endswith(video_exts)]
+
+        if not files_to_check:
+            return messagebox.showinfo("提示", "所选目录下没有找到视频文件。")
+
+        if not messagebox.askyesno("确认",
+                                   f"共发现 {len(files_to_check)} 个视频，准备开始批量查重。\n报告将自动生成在视频同级目录下。\n\n是否开始？"):
+            return
+
+        # 3. 创建进度显示窗口
+        win = Toplevel(self.root)
+        win.title("🚀 批量查重进度")
+        win.geometry("700x500")
+
+        lbl_status = tk.Label(win, text="正在初始化...", pady=10)
+        lbl_status.pack()
+
+        txt_log = Text(win, font=("Consolas", 9), padx=5, pady=5)
+        txt_log.pack(fill=tk.BOTH, expand=True)
+
+        # 4. 后台线程执行
+        def batch_worker():
+            try:
+                import subprocess, pickle, tempfile, re, difflib, os
+                from PIL import Image
+                import imagehash
+                import torch
+                from funasr import AutoModel
+
+                # --- 初始化：加载数据库 ---
+                conn = sqlite3.connect(self.cfg["DB_FILE"])
+                c = conn.cursor()
+                c.execute("SELECT id, path FROM videos")
+                db_metas = {r[0]: r[1] for r in c.fetchall()}
+
+                # 加载特征数据到内存以加速
+                txt_log.insert(tk.END, "📦 正在加载数据库指纹数据...\n")
+
+                # 加载音频
+                c.execute("SELECT video_id, fingerprint FROM audio_fingerprints")
+                db_audios = [(vid, pickle.loads(fp)) for vid, fp in c.fetchall() if fp]
+
+                # 加载视觉
+                c.execute("SELECT video_id, phash FROM visual_hashes")
+                db_visuals = {}
+                for vid, h in c.fetchall():
+                    db_visuals.setdefault(vid, set()).add(int(h, 16))
+
+                # 加载文本
+                def clean_text(t):
+                    t = re.sub(r'[^\w\u4e00-\u9fa5]', '', t)
+                    t = re.sub(r'[嗯啊哦哎呀呢啦哈呗嘛]', '', t)
+                    return t.strip().lower()
+
+                c.execute("SELECT video_id, content FROM text_segments")
+                db_texts = {}
+                for vid, content in c.fetchall():
+                    db_texts.setdefault(vid, []).append((content, clean_text(content)))
+
+                # --- 初始化：加载 AI 模型 (只加载一次) ---
+                txt_log.insert(tk.END, "🤖 正在加载 ASR 模型 (GPU: " + str(torch.cuda.is_available()) + ")...\n")
+                win.update()
+                device = "cuda:0" if torch.cuda.is_available() else "cpu"
+                model = AutoModel(
+                    model="iic/speech_paraformer-large_asr_nat-zh-cn-16k-common-vocab8404-pytorch",
+                    vad_model="iic/speech_fsmn_vad_zh-cn-16k-common-pytorch",
+                    punc_model="iic/punc_ct-transformer_zh-cn-common-vocab272727-pytorch",
+                    device=device, disable_update=True
+                )
+
+                # --- 循环处理每个文件 ---
+                for idx, file_path in enumerate(files_to_check, 1):
+                    file_name = os.path.basename(file_path)
+                    report_path = file_path + "_报告.txt"
+
+                    if os.path.exists(report_path):  # 【新增判断】：如果报告已存在，直接跳过
+                        txt_log.insert(tk.END, f"⏩ 跳过 (报告已存在): {file_name}\n")
+                        txt_log.see(tk.END)
+                        continue
+
+                    lbl_status.config(text=f"正在处理 ({idx}/{len(files_to_check)}): {file_name}")
+                    txt_log.insert(tk.END, f"▶️ {file_name}...")
+                    txt_log.see(tk.END)
+                    win.update()
+
+                    report_content = []
+                    report_content.append(f"🎯 鉴定报告: {file_name}")
+                    report_content.append(f"📂 原始路径: {file_path}")
+                    report_content.append("=" * 70)
+
+                    # --- 1. 音频比对 ---
+                    cmd_audio = ['fpcalc', '-raw', '-length', '600', file_path]
+                    proc = subprocess.Popen(cmd_audio, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+                    out, _ = proc.communicate()
+
+                    res_audio = []
+                    if 'FINGERPRINT=' in out:
+                        ext_fp = set(int(x) for x in out.split('FINGERPRINT=')[1].strip().split(',') if x)
+                        ext_list = list(ext_fp)
+                        for vid, db_fp_blob in db_audios:
+                            db_fp_set = set(db_fp_blob)
+                            if len(ext_fp & db_fp_set) / max(1, len(ext_fp)) > 0.02:
+                                matched = 0
+                                db_list = list(db_fp_set)
+                                for ha in ext_list:
+                                    for hb in db_list:
+                                        if bin(ha ^ hb).count('1') <= 2:
+                                            matched += 1;
+                                            break
+                                score = matched / len(ext_list) if ext_list else 0
+                                if score > 0.1: res_audio.append((score, vid))
+
+                    # --- 2. 视觉比对 ---
+                    temp_dir = tempfile.mkdtemp()
+                    subprocess.run(['ffmpeg', '-y', '-i', file_path, '-vf', 'fps=1,scale=-1:144',
+                                    os.path.join(temp_dir, 'th_%04d.jpg')], stdout=subprocess.DEVNULL,
+                                   stderr=subprocess.DEVNULL)
+                    ext_v_hashes = []
+                    for f in os.listdir(temp_dir):
+                        try:
+                            ext_v_hashes.append(
+                                int(str(imagehash.phash(Image.open(os.path.join(temp_dir, f)))), 16))
+                        except:
+                            pass
+                    import shutil
+                    shutil.rmtree(temp_dir)
+
+                    res_vis = []
+                    tol = self.cfg.get("HAMMING_TOLERANCE", 9)
+                    if ext_v_hashes:
+                        for vid, db_h_set in db_visuals.items():
+                            matched = 0
+                            db_list = list(db_h_set)
+                            for ha in ext_v_hashes:
+                                for hb in db_list:
+                                    if bin(ha ^ hb).count('1') <= tol:
+                                        matched += 1;
+                                        break
+                            score = matched / len(ext_v_hashes)
+                            if score > 0.1: res_vis.append((score, vid))
+
+                    # --- 3. ASR 比对 ---
+                    temp_wav = os.path.join(tempfile.gettempdir(), f"_batch_{idx}.wav")
+                    subprocess.run(
+                        ['ffmpeg', '-y', '-i', file_path, '-vn', '-acodec', 'pcm_s16le', '-ar', '16000', '-ac', '1',
+                         temp_wav], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+                    full_text = ""
+                    res_asr = []
+                    try:
+                        asr_out = model.generate(input=temp_wav, batch_size_s=300)
+                        full_text = asr_out[0].get('text', '') if asr_out else ""
+                        if full_text:
+                            parts = re.split(r'[，。！？；\s,.!?;…]+', full_text)
+                            ext_pairs = [(s, clean_text(s)) for s in parts if len(clean_text(s)) >= 2]
+                            sim_limit = self.cfg.get("SENTENCE_SIMILARITY", 0.65)
+
+                            for vid, db_list in db_texts.items():
+                                matched_pairs = []
+                                db_clean_to_orig = {clean: orig for orig, clean in db_list}
+                                for ext_orig, ext_clean in ext_pairs:
+                                    if ext_clean in db_clean_to_orig:
+                                        matched_pairs.append((1.0, ext_orig, db_clean_to_orig[ext_clean]))
+                                    else:
+                                        for db_orig, db_clean in db_list:
+                                            if abs(len(ext_clean) - len(db_clean)) > 15: continue
+                                            s = difflib.SequenceMatcher(None, ext_clean, db_clean).ratio()
+                                            if s >= sim_limit:
+                                                matched_pairs.append((s, ext_orig, db_orig));
+                                                break
+                                score = len(matched_pairs) / len(ext_pairs) if ext_pairs else 0
+                                if score > 0.08: res_asr.append((score, vid, matched_pairs))
+                    except:
+                        pass
+                    if os.path.exists(temp_wav): os.remove(temp_wav)
+
+                    # --- 汇总结果写入字符串 ---
+                    def write_topN(results, title):
+                        report_content.append(f"\n[{title}比对结果]")
+                        results.sort(key=lambda x: x[0], reverse=True)
+                        if not results:
+                            report_content.append("  ✅ 未发现明显重复内容")
+                        for i, item in enumerate(results[:10], 1):
+                            score, vid = item[0], item[1]
+                            p = db_metas.get(vid, "Unknown")
+                            report_content.append(f"  🔥 Top {i} ({score:.1%}) -> {os.path.basename(p)}")
+                            if len(item) > 2:  # ASR 实锤
+                                for m_s, e_o, d_o in item[2][:5]:
+                                    report_content.append(f"     ↳ (似:{m_s:.0%}) 外:{e_o} / 库:{d_o}")
+
+                    write_topN(res_audio, "🎵 音频声学指纹")
+                    write_topN(res_vis, "👁️ 视觉画面特征")
+                    write_topN(res_asr, "💬 语音对白重合")
+
+                    # if full_text:
+                    #     report_content.append("\n" + "-" * 30 + "\n📜 完整识别文稿：\n" + full_text)
+
+                    if full_text and 'parts' in locals():  # 【修改文稿显示逻辑】：
+                        report_content.append("\n" + "=" * 70)
+                        # 计算有效句子数量（剔除空行）
+                        valid_parts = [s.strip() for s in parts if s.strip()]
+                        report_content.append(f"📜 共提取到 {len(valid_parts)} 句台词：")
+                        report_content.append("=" * 70 + "\n")
+
+                        for p_idx, s in enumerate(valid_parts, 1):
+                            report_content.append(f"[{p_idx:03d}]  {s}")
+
+                    # 保存到文件
+                    with open(report_path, "w", encoding="utf-8") as f:
+                        f.write("\n".join(report_content))
+
+                    txt_log.insert(tk.END, " Done! ✅\n")
+
+                conn.close()
+                txt_log.insert(tk.END, "\n" + "=" * 30 + "\n🎉 批量鉴定完成！报告已生成。")
+                lbl_status.config(text="全部任务处理完毕")
+                messagebox.showinfo("完成", f"批量比对结束，共处理 {len(files_to_check)} 个视频。")
+
+            except Exception as e:
+                txt_log.insert(tk.END, f"\n❌ 严重错误: {e}\n")
+                import traceback
+                print(traceback.format_exc())
+
+        import threading
+        threading.Thread(target=batch_worker, daemon=True).start()
 
     # ================== 新增：查看单文件ASR字幕内容 ==================
     def show_asr_text(self):
@@ -336,3 +575,4 @@ class ExportMixin:
 
         # 设为只读，但允许复制
         txt.config(state=tk.DISABLED)
+
