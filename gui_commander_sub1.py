@@ -67,6 +67,7 @@ class ExportMixin:
                 import tempfile
                 import re
                 import difflib
+                from rapidfuzz import fuzz
                 from PIL import Image
                 import imagehash
 
@@ -235,7 +236,8 @@ class ExportMixin:
                                 best_db_orig = ""
                                 for db_orig, db_clean in db_list:
                                     if abs(len(ext_clean) - len(db_clean)) > 15: continue
-                                    score = difflib.SequenceMatcher(None, ext_clean, db_clean).ratio()
+                                    #score = difflib.SequenceMatcher(None, ext_clean, db_clean).ratio()
+                                    score = fuzz.ratio(ext_clean, db_clean) / 100.0  # 👉 替换2：使用 C++ 核心加速
                                     if score > best_score:
                                         best_score = score
                                         best_db_orig = db_orig
@@ -312,9 +314,11 @@ class ExportMixin:
         txt_log.pack(fill=tk.BOTH, expand=True)
 
         # 4. 后台线程执行
+        @Timer(text="run_batch_external_check.batch_worker 执行时间: {:.4f} 秒")
         def batch_worker():
             try:
                 import subprocess, pickle, tempfile, re, difflib, os
+                from rapidfuzz import fuzz
                 from PIL import Image
                 import imagehash
                 import torch
@@ -349,6 +353,8 @@ class ExportMixin:
                 db_texts = {}
                 for vid, content in c.fetchall():
                     db_texts.setdefault(vid, []).append((content, clean_text(content)))
+
+                db_chars = {v: set("".join(c for _, c in l)) for v, l in db_texts.items()}  # 🚀 新增1行：极简提取每个视频的“全局不重复字集”字典
 
                 # --- 初始化：加载 AI 模型 (只加载一次) ---
                 txt_log.insert(tk.END, "🤖 正在加载 ASR 模型 (GPU: " + str(torch.cuda.is_available()) + ")...\n")
@@ -448,19 +454,24 @@ class ExportMixin:
                             ext_pairs = [(s, clean_text(s)) for s in parts if len(clean_text(s)) >= 2]
                             sim_limit = self.cfg.get("SENTENCE_SIMILARITY", 0.65)
 
+                            ext_chars = set("".join(c for _, c in ext_pairs))  # 🚀 新增：外部视频字集
                             for vid, db_list in db_texts.items():
+                                if len(ext_chars & db_chars.get(vid, set())) / max(1, len(ext_chars)) < 0.2: continue  # 🚀 新增：字集重合度低于20%直接跳过，干掉80%毫无关联的视频
                                 matched_pairs = []
                                 db_clean_to_orig = {clean: orig for orig, clean in db_list}
+                                misses, max_misses = 0, len(ext_pairs) * 0.92  # 🚀 新增：初始化数学熔断器
                                 for ext_orig, ext_clean in ext_pairs:
                                     if ext_clean in db_clean_to_orig:
                                         matched_pairs.append((1.0, ext_orig, db_clean_to_orig[ext_clean]))
                                     else:
                                         for db_orig, db_clean in db_list:
                                             if abs(len(ext_clean) - len(db_clean)) > 15: continue
-                                            s = difflib.SequenceMatcher(None, ext_clean, db_clean).ratio()
+                                            #s = difflib.SequenceMatcher(None, ext_clean, db_clean).ratio()
+                                            s = fuzz.ratio(ext_clean, db_clean) / 100.0  # 👉 替换2：使用 C++ 核心加速
                                             if s >= sim_limit:
                                                 matched_pairs.append((s, ext_orig, db_orig));
                                                 break
+
                                 score = len(matched_pairs) / len(ext_pairs) if ext_pairs else 0
                                 if score > 0.08: res_asr.append((score, vid, matched_pairs))
                     except:
