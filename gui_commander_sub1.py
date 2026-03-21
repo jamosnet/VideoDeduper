@@ -67,6 +67,7 @@ class ExportMixin:
                 import tempfile
                 import re
                 import difflib
+                from rapidfuzz import fuzz
                 from PIL import Image
                 import imagehash
 
@@ -309,7 +310,8 @@ class ExportMixin:
                                 best_db_orig = ""
                                 for db_orig, db_clean in db_list:
                                     if abs(len(ext_clean) - len(db_clean)) > 15: continue
-                                    score = difflib.SequenceMatcher(None, ext_clean, db_clean).ratio()
+                                    #score = difflib.SequenceMatcher(None, ext_clean, db_clean).ratio()
+                                    score = fuzz.ratio(ext_clean, db_clean) / 100.0  # 👉 替换2：使用 C++ 核心加速
                                     if score > best_score:
                                         best_score = score
                                         best_db_orig = db_orig
@@ -380,6 +382,7 @@ class ExportMixin:
         def batch_worker():
             try:
                 import subprocess, pickle, tempfile, re, difflib, os, sys
+                from rapidfuzz import fuzz
                 from PIL import Image
                 import imagehash
                 import soundfile as sf
@@ -517,7 +520,8 @@ class ExportMixin:
                                 else:
                                     for d_o, d_c in db_list:
                                         if abs(len(e_c) - len(d_c)) > 15: continue
-                                        s = difflib.SequenceMatcher(None, e_c, d_c).ratio()
+                                        #s = difflib.SequenceMatcher(None, e_c, d_c).ratio()
+                                        s = fuzz.ratio(e_c, d_c) / 100.0  # 👉 替换2：使用 C++ 核心加速
                                         if s >= sim_limit: matched_p.append((s, e_o, d_o)); break
                             score = len(matched_p) / len(ext_pairs) if ext_pairs else 0
                             if score > 0.08: res_asr.append((score, vid, matched_p))
